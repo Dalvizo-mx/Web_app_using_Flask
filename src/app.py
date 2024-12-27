@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, render_template, redirect, url_for
+from flask import Flask, render_template
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -8,34 +8,14 @@ from prophet import Prophet
 import io
 import base64
 from datetime import date
+import math
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads'
-
-if not os.path.exists(app.config['UPLOAD_FOLDER']):
-    os.makedirs(app.config['UPLOAD_FOLDER'])
 
 @app.route('/')
 def index():
-    return render_template('index.html')
-
-@app.route('/upload', methods=['POST'])
-def upload_file():
-    if 'file' not in request.files:
-        return redirect(request.url)
-    file = request.files['file']
-    if file.filename == '':
-        return redirect(request.url)
-    if file:
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-        file.save(file_path)
-        return redirect(url_for('process_file', filename=file.filename))
-    return redirect(request.url)
-
-@app.route('/process/<filename>')
-def process_file(filename):
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    df = pd.read_csv(file_path)
+    # Path to the CSV file
+    df = pd.read_csv('/workspaces/Web_app_using_Flask/Aquifer_Petrignano (1).csv')
 
     # Data processing
     df = df[df.Rainfall_Bastia_Umbra.notna()].reset_index(drop=True)
@@ -43,6 +23,13 @@ def process_file(filename):
     df.columns = ['date', 'rainfall', 'depth_to_groundwater', 'temperature', 'drainage_volume', 'river_hydrometry']
     df['date'] = pd.to_datetime(df['date'], format='%d/%m/%Y')
     df = df.sort_values(by='date')
+
+    # Fill NaN values
+    df['depth_to_groundwater'] = df['depth_to_groundwater'].fillna(method='ffill')
+    df['depth_to_groundwater'] = df['depth_to_groundwater'].fillna(method='bfill')
+
+    # Ensure there are no remaining NaN values
+    df = df.dropna()
 
     # Prepare data for Prophet
     univariate_df = df[['date', 'depth_to_groundwater']].copy()
@@ -58,7 +45,7 @@ def process_file(filename):
 
     # Calculate metrics
     score_mae = mean_absolute_error(y_valid, y_pred.tail(len(y_valid))['yhat'])
-    score_rmse = mean_squared_error(y_valid, y_pred.tail(len(y_valid))['yhat'], squared=False)
+    score_rmse = math.sqrt(mean_squared_error(y_valid, y_pred.tail(len(y_valid))['yhat']))
 
     # Plot results
     f, ax = plt.subplots(1, figsize=(15, 6))
@@ -69,6 +56,7 @@ def process_file(filename):
     ax.set_xlabel('Date', fontsize=14)
     ax.set_ylabel('Depth to Groundwater', fontsize=14)
 
+    # Save plot to a string buffer
     buf = io.BytesIO()
     plt.savefig(buf, format='png')
     buf.seek(0)
